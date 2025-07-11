@@ -42,6 +42,9 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     # Third-party apps
     'rest_framework',
+    'rest_framework_simplejwt',
+    # Your apps
+    'account',
 ]
 
 MIDDLEWARE = [
@@ -90,7 +93,6 @@ DATABASES = {
         'PORT': os.getenv('MYSQL_PORT', '3306'),
     }
 }
-
 # Configure MongoDB settings using environment variables
 MONGO_SETTINGS = {
     'host': os.getenv('MONGO_HOST', 'mongodb'),
@@ -112,10 +114,62 @@ CELERY_RESULT_SERIALIZER = 'json'
 
 # REST framework settings
 REST_FRAMEWORK = {
+    'DEFAULT_RENDERER_CLASSES': (
+        'rest_framework.renderers.JSONRenderer',
+        'rest_framework.renderers.BrowsableAPIRenderer',  # ← این باید وجود داشته باشه
+    ),
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.AllowAny',
     ],
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
+        'rest_framework.authentication.BasicAuthentication',
+    ],
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '100/day',
+        'user': '1000/day',
+        'otp': '5/hour',
+    },
 }
+
+# Caching settings
+# Using Redis as the cache backend
+CACHES = {
+    'default': {
+        'BACKEND': 'django_redis.cache.RedisCache',
+        'LOCATION': f'redis://{REDIS_HOST}:{REDIS_PORT}/1',
+        'OPTIONS': {
+            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+        }
+    }
+}
+
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'file': {
+            'level': 'ERROR',
+            'class': 'logging.FileHandler',
+            'filename': os.path.join(BASE_DIR, 'logs/error.log'),
+        },
+    },
+    # 'loggers': {
+    #     '': {
+    #         'handlers': ['file'],
+    #         'level': 'ERROR',
+    #         'propagate': True,
+    #     },
+    # },
+}
+# Custom user model
+AUTH_USER_MODEL = 'account.CustomUser' 
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators

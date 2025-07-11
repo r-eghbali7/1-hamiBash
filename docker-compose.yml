@@ -3,6 +3,7 @@ version: '3.8'
 services:
   web:
     build: .
+    container_name: django_app
     command: python manage.py runserver 0.0.0.0:8000
     volumes:
       - .:/app
@@ -11,14 +12,19 @@ services:
     env_file:
       - .env
     depends_on:
-      - mysql
-      - redis
-      - mongodb
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
     networks:
       - app-network
 
   mysql:
     image: mysql:8.4
+    container_name: mysql
+    restart: always
     environment:
       MYSQL_DATABASE: ${MYSQL_DATABASE}
       MYSQL_USER: ${MYSQL_USER}
@@ -28,18 +34,32 @@ services:
       - mysql-data:/var/lib/mysql
     ports:
       - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - app-network
 
   redis:
     image: redis:7.2
+    container_name: redis
+    restart: always
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
     networks:
       - app-network
 
   mongodb:
     image: mongo:7.0
+    container_name: mongodb
+    restart: always
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
@@ -47,19 +67,27 @@ services:
       - mongo-data:/data/db
     ports:
       - "27017:27017"
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - app-network
 
   celery:
     build: .
+    container_name: celery_worker
     command: celery -A config worker --loglevel=info
     volumes:
       - .:/app
     env_file:
       - .env
     depends_on:
-      - redis
-      - web
+      redis:
+        condition: service_healthy
+      web:
+        condition: service_started
     networks:
       - app-network
 
