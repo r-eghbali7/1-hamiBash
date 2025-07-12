@@ -15,6 +15,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()  # Load environment variables from .env file
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -43,8 +44,13 @@ INSTALLED_APPS = [
     # Third-party apps
     'rest_framework',
     'rest_framework_simplejwt',
+    "taggit",
+    
     # Your apps
     'account',
+    'notifications',
+    'interactions',
+    'post',
 ]
 
 MIDDLEWARE = [
@@ -94,6 +100,8 @@ DATABASES = {
     }
 }
 # Configure MongoDB settings using environment variables
+MONGO_DB_URI = os.getenv("MONGO_DB_URI", "mongodb://mongodb:27017/myapp_db")
+MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "myapp_db")
 MONGO_SETTINGS = {
     'host': os.getenv('MONGO_HOST', 'mongodb'),
     'port': int(os.getenv('MONGO_PORT', '27017') or 27017),
@@ -116,7 +124,7 @@ CELERY_RESULT_SERIALIZER = 'json'
 REST_FRAMEWORK = {
     'DEFAULT_RENDERER_CLASSES': (
         'rest_framework.renderers.JSONRenderer',
-        'rest_framework.renderers.BrowsableAPIRenderer',  # ← این باید وجود داشته باشه
+        'rest_framework.renderers.BrowsableAPIRenderer',
     ),
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.AllowAny',
@@ -133,10 +141,10 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'anon': '100/day',
         'user': '1000/day',
-        'otp': '5/hour',
+        'otp': '1/hour',
+        'follow': '30/hour',
     },
 }
-
 # Caching settings
 # Using Redis as the cache backend
 CACHES = {
@@ -160,13 +168,13 @@ LOGGING = {
             'filename': os.path.join(BASE_DIR, 'logs/error.log'),
         },
     },
-    # 'loggers': {
-    #     '': {
-    #         'handlers': ['file'],
-    #         'level': 'ERROR',
-    #         'propagate': True,
-    #     },
-    # },
+    'loggers': {
+        '': {
+            'handlers': ['file'],
+            'level': 'ERROR',
+            'propagate': True,
+        },
+    },
 }
 # Custom user model
 AUTH_USER_MODEL = 'account.CustomUser' 

@@ -5,14 +5,25 @@ from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from rest_framework.throttling import UserRateThrottle
 from django.contrib.auth import authenticate, login
 from django.contrib.auth.forms import PasswordChangeForm
-from .serializers import (
-    RegisterSerializer, OTPSerializer, VerifyOTPSerializer, 
-    LoginSerializer, ForgotPasswordSerializer, ResetPasswordSerializer, ChangePasswordSerializer
-)
+import uuid
+
+from account.throttles import FollowRateThrottle
+from .serializers import *
 from .tasks import send_otp_to_phone, generate_otp
 from .redis_service import OTPService
 from .models import CustomUser
+from .utils.mongo_service import follows_collection
 
+
+def is_valid_uuid(value):
+    try:
+        uuid.UUID(str(value))
+        return True
+    except ValueError:
+        return False
+
+
+# User registration view
 class RegisterView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [UserRateThrottle]
@@ -31,6 +42,7 @@ class RegisterView(APIView):
             return Response({"message": "کاربر ثبت شد. کد OTP به شماره موبایل ارسال شد."}, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+# OTP verification view
 class OTPView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [UserRateThrottle]
@@ -56,6 +68,7 @@ class OTPView(APIView):
                 return Response({"error": "کاربر یافت نشد."}, status=status.HTTP_404_NOT_FOUND)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+# Verify OTP view
 class VerifyOTPView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [UserRateThrottle]
@@ -78,6 +91,7 @@ class VerifyOTPView(APIView):
             return Response({"error": "کد OTP نامعتبر یا منقضی شده است."}, status=status.HTTP_400_BAD_REQUEST)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+# Update user level view
 class UpdateUserLevelView(APIView):
     permission_classes = [IsAdminUser]
 
@@ -94,20 +108,28 @@ class UpdateUserLevelView(APIView):
         except CustomUser.DoesNotExist:
             return Response({"error": "کاربر یافت نشد."}, status=status.HTTP_404_NOT_FOUND)
 
+# User panel view
 class UserPanelView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         user = request.user
+        follow_data = follows_collection.find_one({"user_id": str(user.id)}, {"_id": 0})
+        followers_count = len(follow_data.get("followers", [])) if follow_data else 0
+        following_count = len(follow_data.get("following", [])) if follow_data else 0
+
         data = {
             'email': user.email,
             'full_name': user.full_name,
             'mobile_number': user.mobile_number,
             'user_level': user.user_level,
-            'is_email_verified': user.is_email_verified
+            'is_email_verified': user.is_email_verified,
+            'followers_count': followers_count,
+            'following_count': following_count
         }
         return Response(data, status=status.HTTP_200_OK)
 
+# Login view
 class LoginView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [UserRateThrottle]
@@ -131,6 +153,7 @@ class LoginView(APIView):
             return Response({"error": "ایمیل یا رمز عبور اشتباه است یا حساب غیرفعال است."}, status=status.HTTP_401_UNAUTHORIZED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+# Forgot password view
 class ForgotPasswordView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [UserRateThrottle]
@@ -154,6 +177,7 @@ class ForgotPasswordView(APIView):
                 return Response({"error": "کاربر یافت نشد."}, status=status.HTTP_404_NOT_FOUND)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+# Reset password view
 class ResetPasswordView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [UserRateThrottle]
@@ -176,6 +200,7 @@ class ResetPasswordView(APIView):
             return Response({"error": "کد OTP نامعتبر یا منقضی شده است."}, status=status.HTTP_400_BAD_REQUEST)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+# Change password view
 class ChangePasswordView(APIView):
     permission_classes = [IsAuthenticated]
     throttle_classes = [UserRateThrottle]
@@ -190,3 +215,78 @@ class ChangePasswordView(APIView):
                 return Response({"message": "رمز عبور با موفقیت تغییر کرد."}, status=status.HTTP_200_OK)
             return Response({"error": form.errors}, status=status.HTTP_400_BAD_REQUEST)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+
+# Follow user view
+class FollowUserView(APIView):
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [FollowRateThrottle]
+
+    def post(self, request, user_id):
+        me = str(request.user.id)
+        target = str(user_id)
+
+        if not is_valid_uuid(target):
+            return Response({"error": "شناسه نامعتبر است."}, status=400)
+
+        if me == target:
+            return Response({"error": "نمی‌توانید خودتان را فالو کنید."}, status=400)
+
+        if not CustomUser.objects.filter(id=target).exists():
+            return Response({"error": "کاربر یافت نشد."}, status=404)
+
+        # بررسی بلاک شدن (اختیاری)
+        block_doc = follows_collection.find_one({"user_id": target}, {"blocked": 1})
+        if block_doc and me in block_doc.get("blocked", []):
+            return Response({"error": "شما اجازه فالو این کاربر را ندارید."}, status=403)
+
+        # بررسی فالو بودن قبلی
+        already = follows_collection.find_one({"user_id": me, "following": target})
+        if already:
+            return Response({"message": "قبلاً این کاربر را فالو کرده‌اید."}, status=200)
+
+        follows_collection.update_one(
+            {"user_id": me},
+            {"$addToSet": {"following": target}},
+            upsert=True
+        )
+        follows_collection.update_one(
+            {"user_id": target},
+            {"$addToSet": {"followers": me}},
+            upsert=True
+        )
+
+        return Response({"message": "کاربر با موفقیت فالو شد."}, status=200)
+
+# Unfollow user view
+class UnfollowUserView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, user_id):
+        me = str(request.user.id)
+        target = str(user_id)
+
+        follows_collection.update_one(
+            {"user_id": me},
+            {"$pull": {"following": target}}
+        )
+        follows_collection.update_one(
+            {"user_id": target},
+            {"$pull": {"followers": me}}
+        )
+
+        return Response({"message": "کاربر آنفالو شد."}, status=200)
+    
+# User follow list view
+class UserFollowListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, user_id):
+        doc = follows_collection.find_one({"user_id": str(user_id)}, {"_id": 0})
+        if not doc:
+            return Response({"followers": [], "following": []})
+
+        return Response({
+            "followers": doc.get("followers", []),
+            "following": doc.get("following", [])
+        })
